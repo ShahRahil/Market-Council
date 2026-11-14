@@ -1,0 +1,12 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {SECURITIES,validateRequest,findSecurity} from '../src/securities.js';
+import {policyAccount,accountView} from '../src/accountLogic.js';
+import {evaluatePolicy} from '../src/policy.js';
+import {validatePermissions} from '../src/permissions.js';
+const acct={accountId:'PAPER-001',totalValue:10000,cash:7450,currency:'USD',version:1,positions:[{symbol:'AAPL',value:1500}],reservations:[{clientOrderId:'paper-1',symbol:'MSFT',notionalUsd:1000},{clientOrderId:'paper-2',symbol:'AAPL',notionalUsd:300}]};
+test('US, Canadian, ETFs included',()=>{assert(SECURITIES.some(x=>x.symbol==='RY.TO'));assert(SECURITIES.some(x=>x.symbol==='QQQ'));assert(SECURITIES.length>=15);});
+test('validates freeform requests',()=>{assert.equal(validateRequest({symbol:'ry.to',notionalUsd:125,proposerId:'portfolio-agent'}).security.symbol,'RY.TO');assert.throws(()=>validateRequest({symbol:'NOTREALLY',notionalUsd:100}));assert.throws(()=>validateRequest({symbol:'AAPL',notionalUsd:0}));});
+test('paper reservations reduce usable cash and add concentration exposure',()=>{const account=policyAccount(acct);assert.equal(account.cash,6150);assert.equal(account.positions.find(x=>x.symbol==='AAPL').value,1800);assert.equal(account.positions.find(x=>x.symbol==='MSFT').value,1000);assert.equal(accountView(acct).reservedTotal,1300);});
+test('policy rejects exposure including pending accepted paper orders',()=>{const account=policyAccount(acct);const decision=evaluatePolicy({proposal:{symbol:'AAPL',side:'BUY',notionalUsd:350,proposerId:'portfolio-agent'},account,policy:{version:2,maxPositionPct:20,maxOrderUsd:2500,humanApprovalRequired:true},control:{killSwitch:false},identity:{agentId:'portfolio-agent',enabled:true,allowedActions:['PROPOSE_PAPER_ORDER']}});assert.equal(decision.allowed,false);assert(decision.reasons.includes('POSITION_CONCENTRATION_LIMIT'));});
+test('permissions may be edited for proposal but never grant execution to research agent',()=>{assert.deepEqual(validatePermissions('news-agent',{enabled:true,allowedActions:['PROPOSE_PAPER_ORDER']}),{enabled:true,allowedActions:['PROPOSE_PAPER_ORDER']});assert.throws(()=>validatePermissions('news-agent',{enabled:true,allowedActions:['EXECUTE_AUTHORIZED_PAPER_ORDER']}));assert.throws(()=>validatePermissions('execution-gateway',{enabled:true,allowedActions:['PROPOSE_PAPER_ORDER']}));assert.throws(()=>validatePermissions('news-agent',{enabled:true,allowedActions:['PROPOSE_PAPER_ORDER','PROPOSE_PAPER_ORDER']}));});
